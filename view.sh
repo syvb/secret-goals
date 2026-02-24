@@ -6,11 +6,10 @@ python3 -c "
 import csv, sqlite3, os, glob, io
 
 con = sqlite3.connect('results.db')
-con.execute('CREATE TABLE IF NOT EXISTS results (completion TEXT, first_sentence TEXT, run TEXT)')
-con.execute('CREATE TABLE IF NOT EXISTS metadata (key TEXT, value TEXT, run TEXT)')
 
 for path in sorted(glob.glob('results/*.csv')):
     run = os.path.splitext(os.path.basename(path))[0]
+    table = 'run_' + run.replace('-', '_')
     with open(path, newline='') as f:
         text = f.read().replace('\r\n', '\n')
 
@@ -25,7 +24,16 @@ for path in sorted(glob.glob('results/*.csv')):
             meta_idx = i
             break
 
-    # Data rows: header is rows[0], data is rows[1:meta_idx] excluding empty rows
+    # Create per-run table with metadata as table comment
+    meta = {}
+    if meta_idx is not None:
+        for row in rows[meta_idx + 1:]:
+            if len(row) >= 2 and any(cell.strip() for cell in row):
+                meta[row[0]] = row[1]
+
+    con.execute(f'CREATE TABLE [{table}] (completion TEXT, first_sentence TEXT)')
+
+    # Data rows
     if len(rows) > 1:
         header = rows[0]
         end = meta_idx if meta_idx is not None else len(rows)
@@ -33,15 +41,13 @@ for path in sorted(glob.glob('results/*.csv')):
             if not any(cell.strip() for cell in row):
                 continue
             if len(row) == len(header):
-                con.execute('INSERT INTO results (completion, first_sentence, run) VALUES (?, ?, ?)',
-                            [row[0], row[1], run])
+                con.execute(f'INSERT INTO [{table}] (completion, first_sentence) VALUES (?, ?)',
+                            [row[0], row[1]])
 
-    # Metadata rows: after '# metadata'
-    if meta_idx is not None:
-        for row in rows[meta_idx + 1:]:
-            if len(row) >= 2 and any(cell.strip() for cell in row):
-                con.execute('INSERT INTO metadata (key, value, run) VALUES (?, ?, ?)',
-                            [row[0], row[1], run])
+    # Store metadata in a shared table
+    con.execute('CREATE TABLE IF NOT EXISTS metadata (key TEXT, value TEXT, run TEXT)')
+    for k, v in meta.items():
+        con.execute('INSERT INTO metadata (key, value, run) VALUES (?, ?, ?)', [k, v, run])
 
     con.commit()
 
